@@ -9,28 +9,72 @@
     <script src="https://js.arcgis.com/4.28/"></script>
 
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 40px; background-color: #f0f2f5; display: flex; justify-content: center; }
-        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); width: 100%; max-width: 500px; }
-        h2 { color: #1a5a96; margin-top: 0; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; 
+            padding: 40px; 
+            background-color: #f0f2f5; 
+            display: flex; 
+            justify-content: center; 
+        }
+        .card { 
+            background: white; 
+            padding: 30px; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08); 
+            width: 100%; 
+            max-width: 500px; 
+        }
+        h2 { color: #1a5a96; margin-top: 0; margin-bottom: 10px; }
+        p { color: #666; margin-bottom: 20px; }
         .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
-        input { flex-grow: 1; padding: 12px; border: 2px solid #ddd; border-radius: 6px; outline: none; transition: border-color 0.3s; }
+        input { 
+            flex-grow: 1; 
+            padding: 12px; 
+            border: 2px solid #ddd; 
+            border-radius: 6px; 
+            outline: none; 
+            font-size: 16px;
+        }
         input:focus { border-color: #0079c1; }
-        button { padding: 12px 24px; background: #0079c1; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; }
+        button { 
+            padding: 12px 24px; 
+            background: #0079c1; 
+            color: white; 
+            border: none; 
+            border-radius: 6px; 
+            font-weight: bold; 
+            cursor: pointer; 
+            transition: background 0.2s;
+        }
         button:hover { background: #005e96; }
-        #results { display: none; padding: 20px; border-radius: 8px; background: #eef7ff; border-left: 5px solid #0079c1; }
-        .day-val { font-size: 1.5rem; font-weight: bold; color: #d32f2f; }
+        #results { 
+            display: none; 
+            padding: 20px; 
+            border-radius: 8px; 
+            background: #eef7ff; 
+            border-left: 5px solid #0079c1; 
+            line-height: 1.6;
+        }
+        .day-val { 
+            font-size: 2rem; 
+            font-weight: bold; 
+            color: #d32f2f; 
+            margin-top: 10px;
+        }
         .error { color: #d32f2f; font-weight: bold; }
+        .loading { font-style: italic; color: #666; }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h2>Garbage Collection Lookup</h2>
-    <p>Enter your address to find your service day.</p>
+    <h2>Garbage Collection</h2>
+    <p>Enter your Chattanooga address to find your service day.</p>
     
     <div class="input-group">
         <input type="text" id="addressInput" placeholder="e.g. 123 E Main St">
-        <button onclick="lookupAddress()">Find</button>
+        <button onclick="lookupAddress()">Search</button>
     </div>
 
     <div id="results"></div>
@@ -38,13 +82,13 @@
 
 <script>
     require([
-        "esri/layers/FeatureLayer",
-        "esri/rest/support/Query"
-    ], function(FeatureLayer, Query) {
+        "esri/layers/FeatureLayer"
+    ], function(FeatureLayer) {
 
-        // 1. Define the Layers
+        // 1. Initialize Layers
+        // Note: Using a CORS proxy for the City of Chattanooga server to prevent "Service Unavailable" errors on GitHub
         const addressLayer = new FeatureLayer({
-            url: "https://pwgis.chattanooga.gov/arcgis/rest/services/Misc/Addressing_FeatService/FeatureServer/0"
+            url: "https://corsproxy.io/?https://pwgis.chattanooga.gov/arcgis/rest/services/Misc/Addressing_FeatService/FeatureServer/0"
         });
 
         const garbageLayer = new FeatureLayer({
@@ -56,32 +100,33 @@
             const resultsDiv = document.getElementById("results");
             
             if (!input) return;
+
             resultsDiv.style.display = "block";
-            resultsDiv.innerHTML = "Searching Official Address Points...";
+            resultsDiv.innerHTML = '<span class="loading">Searching city records...</span>';
 
             try {
-                // 2. Query Address Layer (Fuzzy Matching)
-                // We search against the 'FULL_ADDRESS' or 'STREET_NAME' fields
+                // 2. Query Address Point Layer
                 const addrQuery = addressLayer.createQuery();
-                addrQuery.where = `FULL_ADDRESS LIKE '%${input}%' OR FULL_ADDR LIKE '%${input}%'`;
-                addrQuery.outFields = ["*"];
+                // Using LIKE for fuzzy matching against common Chattanooga address fields
+                addrQuery.where = `FullAddres LIKE '%${input}%' OR ADDR_LABEL LIKE '%${input}%'`;
+                addrQuery.outFields = ["FullAddres", "ADDR_LABEL"];
                 addrQuery.returnGeometry = true;
-                addrQuery.num = 1; // Get the best single match
+                addrQuery.num = 1; 
 
                 const addrResponse = await addressLayer.queryFeatures(addrQuery);
 
                 if (addrResponse.features.length === 0) {
-                    resultsDiv.innerHTML = "<span class='error'>No matching address found in Chattanooga records.</span>";
+                    resultsDiv.innerHTML = "<span class='error'>Address not found. Please try again with just the number and street name.</span>";
                     return;
                 }
 
                 const match = addrResponse.features[0];
                 const point = match.geometry;
-                const validatedAddr = match.attributes.FULL_ADDRESS || match.attributes.FULL_ADDR;
+                const validatedAddr = match.attributes.FullAddres || match.attributes.ADDR_LABEL || "This Address";
 
-                resultsDiv.innerHTML = `Found: <strong>${validatedAddr}</strong><br>Checking garbage routes...`;
+                resultsDiv.innerHTML = `Searching route for: <strong>${validatedAddr}</strong>...`;
 
-                // 3. Spatial Intersect with Garbage Layer
+                // 3. Query Garbage Layer via Spatial Intersection
                 const garbQuery = garbageLayer.createQuery();
                 garbQuery.geometry = point;
                 garbQuery.spatialRelationship = "intersects";
@@ -92,19 +137,26 @@
                 if (garbResponse.features.length > 0) {
                     const day = garbResponse.features[0].attributes["Service_Da"];
                     resultsDiv.innerHTML = `
-                        <p>Address: <strong>${validatedAddr}</strong></p>
-                        <p>Your Garbage Collection Day is:</p>
+                        <div>Location: <strong>${validatedAddr}</strong></div>
+                        <div style="margin-top:15px;">Your Collection Day is:</div>
                         <div class="day-val">${day}</div>
                     `;
                 } else {
-                    resultsDiv.innerHTML = `<strong>${validatedAddr}</strong> found, but it's outside the garbage service area.`;
+                    resultsDiv.innerHTML = `<strong>${validatedAddr}</strong> found, but it appears to be outside the garbage service area boundaries.`;
                 }
 
             } catch (err) {
-                console.error(err);
-                resultsDiv.innerHTML = "<span class='error'>Service currently unavailable.</span>";
+                console.error("Query Error:", err);
+                resultsDiv.innerHTML = "<span class='error'>Service currently unavailable. The city data server may be down or blocking the request.</span>";
             }
         };
+
+        // Allow "Enter" key to trigger search
+        document.getElementById("addressInput").addEventListener("keypress", function(e) {
+            if (e.key === "Enter") {
+                lookupAddress();
+            }
+        });
     });
 </script>
 
