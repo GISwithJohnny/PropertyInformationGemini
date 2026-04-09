@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chattanooga Garbage Day Lookup</title>
+    
+    <link rel="stylesheet" href="https://js.arcgis.com/4.28/esri/themes/light/main.css">
+    <script src="https://js.arcgis.com/4.28/"></script>
+
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 40px; background-color: #f0f2f5; display: flex; justify-content: center; }
+        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); width: 100%; max-width: 500px; }
+        h2 { color: #1a5a96; margin-top: 0; }
+        .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
+        input { flex-grow: 1; padding: 12px; border: 2px solid #ddd; border-radius: 6px; outline: none; transition: border-color 0.3s; }
+        input:focus { border-color: #0079c1; }
+        button { padding: 12px 24px; background: #0079c1; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; }
+        button:hover { background: #005e96; }
+        #results { display: none; padding: 20px; border-radius: 8px; background: #eef7ff; border-left: 5px solid #0079c1; }
+        .day-val { font-size: 1.5rem; font-weight: bold; color: #d32f2f; }
+        .error { color: #d32f2f; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>Garbage Collection Lookup</h2>
+    <p>Enter your address to find your service day.</p>
+    
+    <div class="input-group">
+        <input type="text" id="addressInput" placeholder="e.g. 123 E Main St">
+        <button onclick="lookupAddress()">Find</button>
+    </div>
+
+    <div id="results"></div>
+</div>
+
+<script>
+    require([
+        "esri/layers/FeatureLayer",
+        "esri/rest/support/Query"
+    ], function(FeatureLayer, Query) {
+
+        // 1. Define the Layers
+        const addressLayer = new FeatureLayer({
+            url: "https://pwgis.chattanooga.gov/arcgis/rest/services/Misc/Addressing_FeatService/FeatureServer/0"
+        });
+
+        const garbageLayer = new FeatureLayer({
+            url: "https://services2.arcgis.com/OIAIimblRxPs0xxc/arcgis/rest/services/Garbage_Service_Areas/FeatureServer/0"
+        });
+
+        window.lookupAddress = async function() {
+            const input = document.getElementById("addressInput").value.trim().toUpperCase();
+            const resultsDiv = document.getElementById("results");
+            
+            if (!input) return;
+            resultsDiv.style.display = "block";
+            resultsDiv.innerHTML = "Searching Official Address Points...";
+
+            try {
+                // 2. Query Address Layer (Fuzzy Matching)
+                // We search against the 'FULL_ADDRESS' or 'STREET_NAME' fields
+                const addrQuery = addressLayer.createQuery();
+                addrQuery.where = `FULL_ADDRESS LIKE '%${input}%' OR FULL_ADDR LIKE '%${input}%'`;
+                addrQuery.outFields = ["*"];
+                addrQuery.returnGeometry = true;
+                addrQuery.num = 1; // Get the best single match
+
+                const addrResponse = await addressLayer.queryFeatures(addrQuery);
+
+                if (addrResponse.features.length === 0) {
+                    resultsDiv.innerHTML = "<span class='error'>No matching address found in Chattanooga records.</span>";
+                    return;
+                }
+
+                const match = addrResponse.features[0];
+                const point = match.geometry;
+                const validatedAddr = match.attributes.FULL_ADDRESS || match.attributes.FULL_ADDR;
+
+                resultsDiv.innerHTML = `Found: <strong>${validatedAddr}</strong><br>Checking garbage routes...`;
+
+                // 3. Spatial Intersect with Garbage Layer
+                const garbQuery = garbageLayer.createQuery();
+                garbQuery.geometry = point;
+                garbQuery.spatialRelationship = "intersects";
+                garbQuery.outFields = ["Service_Da"];
+
+                const garbResponse = await garbageLayer.queryFeatures(garbQuery);
+
+                if (garbResponse.features.length > 0) {
+                    const day = garbResponse.features[0].attributes["Service_Da"];
+                    resultsDiv.innerHTML = `
+                        <p>Address: <strong>${validatedAddr}</strong></p>
+                        <p>Your Garbage Collection Day is:</p>
+                        <div class="day-val">${day}</div>
+                    `;
+                } else {
+                    resultsDiv.innerHTML = `<strong>${validatedAddr}</strong> found, but it's outside the garbage service area.`;
+                }
+
+            } catch (err) {
+                console.error(err);
+                resultsDiv.innerHTML = "<span class='error'>Service currently unavailable.</span>";
+            }
+        };
+    });
+</script>
+
+</body>
+</html>
